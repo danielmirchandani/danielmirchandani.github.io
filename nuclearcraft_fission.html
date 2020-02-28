@@ -135,29 +135,33 @@ function isAdjacentToAtLeastOneReactorCasing(grid, x, y, z) {
 		(y == 0) || (y == grid[x].length - 1) ||
 		(z == 0) || (z == grid[x][y].length - 1);
 }
-function generateIsActiveBlock (type) {
-	function isActiveBlock(grid, x, y, z) {
-		return (grid[x][y][z] == type) && BLOCK_PROPERTIES[type].active(grid, x, y, z);
-	}
-	return isActiveBlock;
+function generateIsValidBlock (type) {
+	return (grid, x, y, z) => (
+		(grid[x][y][z] == type) && BLOCK_PROPERTIES[type].valid(grid, x, y, z)
+	);
 }
-let isActiveModerator = generateIsActiveBlock(BLOCKS.MODERATOR);
-let isActiveGlowstoneCooler = generateIsActiveBlock(BLOCKS.GLOWSTONE);
-let isActiveGoldCooler = generateIsActiveBlock(BLOCKS.GOLD);
-let isActiveLapisCooler = generateIsActiveBlock(BLOCKS.LAPIS);
-let isActiveQuartzCooler = generateIsActiveBlock(BLOCKS.QUARTZ);
-let isActiveRedstoneCooler = generateIsActiveBlock(BLOCKS.REDSTONE);
-let isActiveWaterCooler = generateIsActiveBlock(BLOCKS.WATER);
-let isCell = generateIsActiveBlock(BLOCKS.CELL);
+let isCell = (grid, x, y, z) => (grid[x][y][z] == BLOCKS.CELL);
+function isActiveModerator(grid, x, y, z) {
+	// Should this also cover when a moderator is used to extend cell adjacency?
+	return
+		(grid[x][y][z] == BLOCKS.MODERATOR) &&
+		isAdjacentToAtLeastN(grid, x, y, z, 1, isCell);
+};
+let isValidGlowstoneCooler = generateIsValidBlock(BLOCKS.GLOWSTONE);
+let isValidGoldCooler = generateIsValidBlock(BLOCKS.GOLD);
+let isValidLapisCooler = generateIsValidBlock(BLOCKS.LAPIS);
+let isValidQuartzCooler = generateIsValidBlock(BLOCKS.QUARTZ);
+let isValidRedstoneCooler = generateIsValidBlock(BLOCKS.REDSTONE);
+let isValidWaterCooler = generateIsValidBlock(BLOCKS.WATER);
 let BLOCK_PROPERTIES = {
 	[BLOCKS.EMPTY]: {
 		'display': 'Empty',
 		'cool': 0,
+		'valid': () => true,
 	},
 	[BLOCKS.CELL]: {
 		'display': 'Cell',
 		'cool': 0,
-		'active': () => true,
 		'heat': function (fuel, grid, x, y, z) {
 			let e = cellEfficiency(grid, x, y, z);
 			return FUELS[fuel].heat * e * (e + 1) / 2;
@@ -165,18 +169,11 @@ let BLOCK_PROPERTIES = {
 		'power': function (fuel, grid, x, y, z) {
 			return FUELS[fuel].power * cellEfficiency(grid, x, y, z);
 		},
+		'valid': () => true,
 	},
 	[BLOCKS.MODERATOR]: {
 		'display': 'Moderator',
 		'cool': 0,
-		'active' : function (grid, x, y, z) {
-			if (grid[x][y][z] != BLOCKS.MODERATOR) {
-				return false;
-			}
-			// Should this also cover when a moderator is used to extend cell
-			// adjacency?
-			return isAdjacentToAtLeastN(grid, x, y, z, isCell);
-		},
 		'heat': function (fuel, grid, x, y, z) {
 			let sum = 0;
 			if ((x > 0) && (grid[x - 1][y][z] == BLOCKS.CELL)) {
@@ -196,6 +193,9 @@ let BLOCK_PROPERTIES = {
 			}
 			if ((z < grid[x][y].length - 1) && (grid[x][y][z + 1] == BLOCKS.CELL)) {
 				sum += FUELS[fuel].heat * cellEfficiency(grid, x, y, z + 1) / 3;
+			}
+			if (sum == 0) {
+				return FUELS[fuel].heat;
 			}
 			return sum;
 		},
@@ -221,11 +221,14 @@ let BLOCK_PROPERTIES = {
 			}
 			return sum;
 		},
+		// An inactive moderator can still be useful up to 4 blocks away from a
+		// cell, so let moderators be "valid" anywhere.
+		'valid': () => true,
 	},
 	[BLOCKS.WATER]: {
 		'display': 'Water',
 		'cool': 20,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			function isCellOrActiveModerator (grid, x, y, z) {
 				return
 					isCell(grid, x, y, z) || isActiveModerator(grid, x, y, z);
@@ -237,37 +240,37 @@ let BLOCK_PROPERTIES = {
 	[BLOCKS.REDSTONE]: {
 		'display': 'Redstone',
 		'cool': 80,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return isAdjacentToAtLeastN(grid, x, y, z, 1, isCell);
 		},
 	},
 	[BLOCKS.QUARTZ]: {
 		'display': 'Quartz',
 		'cool': 80,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveModerator);
 		},
 	},
 	[BLOCKS.GOLD]: {
 		'display': 'Gold',
 		'cool': 120,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return
-				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveWaterCooler) &&
-				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveRedstoneCooler);
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isValidWaterCooler) &&
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isValidRedstoneCooler);
 		},
 	},
 	[BLOCKS.GLOWSTONE]: {
 		'display': 'Glowstone',
 		'cool': 120,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return isAdjacentToAtLeastN(grid, x, y, z, 2, isActiveModerator);
 		},
 	},
 	[BLOCKS.LAPIS]: {
 		'display': 'Lapis',
 		'cool': 100,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return
 				isAdjacentToAtLeastN(grid, x, y, z, 1, isCell) &&
 				isAdjacentToAtLeastOneReactorCasing(grid, x, y, z);
@@ -276,25 +279,25 @@ let BLOCK_PROPERTIES = {
 	[BLOCKS.DIAMOND]: {
 		'display': 'Diamond',
 		'cool': 120,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return
-				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveWaterCooler) &&
-				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveQuartzCooler);
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isValidWaterCooler) &&
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isValidQuartzCooler);
 		},
 	},
 	[BLOCKS.HELIUM]: {
 		'display': 'Liquid Helium',
 		'cool': 120,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return
-				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveRedstoneCooler) &&
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isValidRedstoneCooler) &&
 				isAdjacentToAtLeastOneReactorCasing(grid, x, y, z);
 		},
 	},
 	[BLOCKS.ENDERIUM]: {
 		'display': 'Enderium',
 		'cool': 140,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return
 				((x == 0) || (x == grid.length - 1)) &&
 				((y == 0) || (y == grid[x].length - 1)) &&
@@ -304,21 +307,21 @@ let BLOCK_PROPERTIES = {
 	[BLOCKS.CRYOTHEUM]: {
 		'display': 'Cryotheum',
 		'cool': 140,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return isAdjacentToAtLeastN(grid, x, y, z, 2, isCell);
 		},
 	},
 	[BLOCKS.IRON]: {
 		'display': 'Iron',
 		'cool': 60,
-		'active': function (grid, x, y, z) {
-			return isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveGoldCooler);
+		'valid': function (grid, x, y, z) {
+			return isAdjacentToAtLeastN(grid, x, y, z, 1, isValidGoldCooler);
 		},
 	},
 	[BLOCKS.EMERALD]: {
 		'display': 'Emerald',
 		'cool': 140,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return
 				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveModerator) &&
 				isAdjacentToAtLeastN(grid, x, y, z, 1, isCell);
@@ -327,37 +330,37 @@ let BLOCK_PROPERTIES = {
 	[BLOCKS.COPPER]: {
 		'display': 'Copper',
 		'cool': 60,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return
-				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveGlowstoneCooler);
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isValidGlowstoneCooler);
 		},
 	},
 	[BLOCKS.TIN]: {
 		'display': 'Tin',
 		'cool': 80,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return (
 				(x > 0) &&
-				isActiveLapisCooler(grid, x - 1, y, z) &&
+				isValidLapisCooler(grid, x - 1, y, z) &&
 				(x < grid.length - 1) &&
-				isActiveLapisCooler(grid, x + 1, y, z)
+				isValidLapisCooler(grid, x + 1, y, z)
 			) || (
 				(y > 0) &&
-				isActiveLapisCooler(grid, x, y - 1, z) &&
+				isValidLapisCooler(grid, x, y - 1, z) &&
 				(y < grid[x].length - 1) &&
-				isActiveLapisCooler(grid, x, y + 1, z)
+				isValidLapisCooler(grid, x, y + 1, z)
 			) || (
 				(z > 0) &&
-				isActiveLapisCooler(grid, x, y, z - 1) &&
+				isValidLapisCooler(grid, x, y, z - 1) &&
 				(z < grid[x][y].length - 1) &&
-				isActiveLapisCooler(grid, x, y, z + 1)
+				isValidLapisCooler(grid, x, y, z + 1)
 			);
 		},
 	},
 	[BLOCKS.MAGNESIUM]: {
 		'display': 'Magnesium',
 		'cool': 100,
-		'active': function (grid, x, y, z) {
+		'valid': function (grid, x, y, z) {
 			return
 				isAdjacentToAtLeastOneReactorCasing(grid, x, y, z) &&
 				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveModerator);
@@ -410,6 +413,25 @@ document.getElementById('reactor-form').addEventListener(
 		let bestPower = 0;
 		let bestHeat = 0;
 		let bestGrid = '';
+		function gridToString (grid) {
+			let ret = '[';
+			for (let x = 0; x < grid.length; ++x) {
+				ret += '[';
+				for (let y = 0; y < grid[x].length; ++y) {
+					ret += '[';
+					for (let z = 0; z < grid[x][y].length; ++z) {
+						if (typeof grid[x][y][z] == 'string') {
+							ret += '"' + grid[x][y][z] + '",';
+						} else {
+							ret += grid[x][y][z] + ',';
+						}
+					}
+					ret += '],';
+				}
+				ret += ']';
+			}
+			return ret + ']';		
+		}
 		function gridStep (fuel, grid, x, y, z) {
 			if (z >= grid[x][y].length) {
 				y += 1;
@@ -435,32 +457,27 @@ document.getElementById('reactor-form').addEventListener(
 					continue;
 				}
 				grid[x][y][z] = BLOCKS[block];
+				// Once we assign this block, the block at (x - 1) has all 6
+				// adjacent blocks assigned and can be checked for validity to
+				// cut off some recursion.
+				if ((x > 0) && !BLOCK_PROPERTIES[grid[x - 1][y][z]].valid(grid, x - 1, y, z)) {
+					continue;
+				}
+				// If we're at the end of (x), we can also check (y - 1) since
+				// all blocks adjacent to (y - 1) are filled too ((x + 1) will
+				// be reactor casing)
+				if ((x == grid.length - 1) && (y > 0) && !BLOCK_PROPERTIES[grid[x][y - 1][z]].valid(grid, x, y - 1, z)) {
+					continue;
+				}
+				if ((x == grid.length - 1) && (y == grid[x].length - 1) && (z > 0) && !BLOCK_PROPERTIES[grid[x][y][z - 1]].valid(grid, x, y, z - 1)) {
+					continue;
+				}
+				if ((x == grid.length - 1) && (y == grid[x].length - 1) && (z == grid[x][y].length - 1) && !BLOCK_PROPERTIES[grid[x][y][z]].valid(grid, x, y, z)) {
+					continue;
+				}
 				gridStep(fuel, grid, x, y, z + 1);
 			}
 		}
-		// function gridStep (fuel, grid, x, y, z) {
-		// 	for (let block in BLOCKS) {
-		// 		if (!BLOCKS.hasOwnProperty(block)) {
-		// 			continue;
-		// 		}
-		// 		console.log('Testing', x, y, z, 'with', BLOCKS[block].display);
-		// 		grid[x][y][z] = block;
-		// 		for (let ix = x; ix < grid.length; ++ix) {
-		// 			for (let iy = y; iy < grid[x].length; ++iy) {
-		// 				for (let iz = z + 1; iz < grid[x][y].length; ++iz) {
-		// 					gridStep(fuel, grid, ix, iy, iz);
-		// 				}
-		// 			}
-		// 		}
-		// 		let thisPower = calculatePower(fuel, grid);
-		// 		let thisHeat = calculateHeat(fuel, grid);
-		// 		if ((thisHeat <= 0) && (thisPower > bestPower)) {
-		// 			bestPower = thisPower;
-		// 			bestHeat = thisHeat;
-		// 			console.log('New best power', bestPower, 'and heat', bestHeat, grid);
-		// 		}
-		// 	}
-		// }
 		let checked = document.querySelector(
 			'#fuel-radios input[name = "fuels"]:checked'
 		);
@@ -476,27 +493,8 @@ document.getElementById('reactor-form').addEventListener(
 				}
 			}
 		}
-		function gridToString (grid) {
-			let ret = '[';
-			for (let x = 0; x < grid.length; ++x) {
-				ret += '[';
-				for (let y = 0; y < grid[x].length; ++y) {
-					ret += '[';
-					for (let z = 0; z < grid[x][y].length; ++z) {
-						if (typeof grid[x][y][z] == 'string') {
-							ret += '"' + grid[x][y][z] + '",';
-						} else {
-							ret += grid[x][y][z] + ',';
-						}
-					}
-					ret += '],';
-				}
-				ret += ']';
-			}
-			return ret + ']';		
-		}
 		gridStep(fuel, grid, 0, 0, 0);
-		console.log('Best power', bestPower, 'and heat', bestHeat, 'with grid', gridToString(bestGrid));
+		console.log('Best power', bestPower, 'and heat', bestHeat, 'with grid', bestGrid);
 		// let grid = [
 		// 	[
 		// 		[1, 2, 1],
@@ -514,7 +512,7 @@ document.getElementById('reactor-form').addEventListener(
 		// 		[1, 8, 1],
 		// 	],
 		// ];
-		// console.log('Power', calculatePower(fuel, grid));
+		// console.log('Power', calculatePower(fuel, grid));  // Should be ~10K
 		// console.log('Heat', calculateHeat(fuel, grid));
 	}
 );
