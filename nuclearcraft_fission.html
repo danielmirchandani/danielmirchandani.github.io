@@ -444,7 +444,10 @@ document.getElementById('reactor-form').addEventListener(
 			if (x >= grid.length) {
 				let thisPower = calculatePower(fuel, grid);
 				let thisHeat = calculateHeat(fuel, grid);
-				if ((thisHeat <= 0) && (thisPower > bestPower)) {
+				// If we produce as much power as the previous best, prefer the
+				// grid that produces more heat (but still not positive) since
+				// that grid probably uses more efficient materials to do that.
+				if ((thisHeat <= 0) && ((thisPower > bestPower) || ((thisPower == bestPower) && (thisHeat > bestHeat)))) {
 					bestPower = thisPower;
 					bestHeat = thisHeat;
 					bestGrid = gridToString(grid);
