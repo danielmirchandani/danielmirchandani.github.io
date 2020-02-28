@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta
+		name="viewport"
+		content="width=device-width, initial-scale=1, shrink-to-fit=no"
+	>
+	<link
+		rel="stylesheet"
+		href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
+		integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh"
+		crossorigin="anonymous"
+	>
+	<title>NuclearCraft Fission Calculator</title>
+</head>
+<body>
+<div class="container">
+	<form id="reactor-form">
+		<div class="form-group">
+			<label for="size">Size</label>
+			<input type="text" class="form-control" id="size">
+		</div>
+		<div id="fuel-radios" class="form-group">
+			<div class="form-check form-check-inline invisible">
+				<input
+					class="form-check-input"
+					type="radio"
+					name="fuels"
+					id="exampleRadios1"
+					value="example1"
+				>
+	  			<label class="form-check-label" for="exampleRadios1">1</label>
+			</div>
+		</div>
+		<button type="submit">Find best configuration</button>
+	</form>
+</div>
+<script>
+'use strict';
+const BLOCKS = {
+	EMPTY: 0,
+	CELL: 1,
+	MODERATOR: 2,
+	WATER: 3,
+	REDSTONE: 4,
+	QUARTZ: 5,
+	GOLD: 6,
+	GLOWSTONE: 7,
+	LAPIS: 8,
+	DIAMOND: 9,
+	HELIUM: 10,
+	ENDERIUM: 11,
+	CRYOTHEUM: 12,
+	IRON: 13,
+	EMERALD: 14,
+	COPPER: 15,
+	TIN: 16,
+	MAGNESIUM: 17,
+}
+const FUELS = [
+	{'display': 'TBU', 'time': 60, 'power': 360, 'heat': 21.6},
+	{'display': 'TBU Oxide', 'time': 60, 'power': 504, 'heat': 27},
+	{'display': 'LEU-233', 'time': 26.67, 'power': 864, 'heat': 72},
+];
+function cellEfficiency (grid, x, y, z) {
+	let adjacent = 0;
+	function scan (axis, direction, condition_function, grid_lookup_function) {
+		for (let i = axis + direction; condition_function(i); i += direction) {
+			if (grid_lookup_function(i) == BLOCKS.CELL) {
+				return 1;
+			} else if (grid_lookup_function(i) != BLOCKS.MODERATOR) {
+				return 0;
+			}
+		}
+		return 0;
+	}
+	adjacent += scan(x, -1, i => (i >= 0) && (x - i <= 4), i => grid[i][y][z]);
+	adjacent += scan(
+		x, 1, i => (i < grid.length) && (i - x <= 4), i => grid[i][y][z]
+	);
+	adjacent += scan(y, -1, i => (i >= 0) && (y - i <= 4), i => grid[x][i][z]);
+	adjacent += scan(
+		y, 1, i => (i < grid[x].length) && (i - y <= 4), i => grid[x][i][z]
+	);
+	adjacent += scan(z, -1, i => (i >= 0) && (z - i <= 4), i => grid[x][y][i]);
+	adjacent += scan(
+		z, 1, i => (i < grid[x][y].length) && (i - z <= 4),i => grid[x][y][i])
+	;
+	return adjacent + 1;
+}
+function isAdjacentToAtLeastN(grid, x, y, z, n, condition) {
+	let count = 0;
+	if ((x > 0) && condition(grid, x - 1, y, z)) {
+		count += 1;
+		if (count >= n) {
+			return true;
+		}
+	}
+	if ((x < grid.length - 1) && condition(grid, x + 1, y, z)) {
+		count += 1;
+		if (count >= n) {
+			return true;
+		}
+	}
+	if ((y > 0) && condition(grid, x, y - 1, z)) {
+		count += 1;
+		if (count >= n) {
+			return true;
+		}
+	}
+	if ((y < grid[x].length - 1) && condition(grid, x, y + 1, z)) {
+		count += 1;
+		if (count >= n) {
+			return true;
+		}
+	}
+	if ((z > 0) && condition(grid, x, y, z - 1)) {
+		count += 1;
+		if (count >= n) {
+			return true;
+		}
+	}
+	if ((z < grid[x].length - 1) && condition(grid, x, y, z + 1)) {
+		count += 1;
+		if (count >= n) {
+			return true;
+		}
+	}
+	return (count >= n);
+}
+function isAdjacentToAtLeastOneReactorCasing(grid, x, y, z) {
+	return
+		(x == 0) || (x == grid.length - 1) ||
+		(y == 0) || (y == grid[x].length - 1) ||
+		(z == 0) || (z == grid[x][y].length - 1);
+}
+function generateIsActiveBlock (type) {
+	function isActiveBlock(grid, x, y, z) {
+		return (grid[x][y][z] == type) && BLOCK_PROPERTIES[type].active(grid, x, y, z);
+	}
+	return isActiveBlock;
+}
+let isActiveModerator = generateIsActiveBlock(BLOCKS.MODERATOR);
+let isActiveGlowstoneCooler = generateIsActiveBlock(BLOCKS.GLOWSTONE);
+let isActiveGoldCooler = generateIsActiveBlock(BLOCKS.GOLD);
+let isActiveLapisCooler = generateIsActiveBlock(BLOCKS.LAPIS);
+let isActiveQuartzCooler = generateIsActiveBlock(BLOCKS.QUARTZ);
+let isActiveRedstoneCooler = generateIsActiveBlock(BLOCKS.REDSTONE);
+let isActiveWaterCooler = generateIsActiveBlock(BLOCKS.WATER);
+let isCell = generateIsActiveBlock(BLOCKS.CELL);
+let BLOCK_PROPERTIES = {
+	[BLOCKS.EMPTY]: {
+		'display': 'Empty',
+		'cool': 0,
+	},
+	[BLOCKS.CELL]: {
+		'display': 'Cell',
+		'cool': 0,
+		'active': () => true,
+		'heat': function (fuel, grid, x, y, z) {
+			let e = cellEfficiency(grid, x, y, z);
+			return FUELS[fuel].heat * e * (e + 1) / 2;
+		},
+		'power': function (fuel, grid, x, y, z) {
+			return FUELS[fuel].power * cellEfficiency(grid, x, y, z);
+		},
+	},
+	[BLOCKS.MODERATOR]: {
+		'display': 'Moderator',
+		'cool': 0,
+		'active' : function (grid, x, y, z) {
+			if (grid[x][y][z] != BLOCKS.MODERATOR) {
+				return false;
+			}
+			// Should this also cover when a moderator is used to extend cell
+			// adjacency?
+			return isAdjacentToAtLeastN(grid, x, y, z, isCell);
+		},
+		'heat': function (fuel, grid, x, y, z) {
+			let sum = 0;
+			if ((x > 0) && (grid[x - 1][y][z] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].heat * cellEfficiency(grid, x - 1, y, z) / 3;
+			}
+			if ((x < grid.length - 1) && (grid[x + 1][y][z] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].heat * cellEfficiency(grid, x + 1, y, z) / 3;
+			}
+			if ((y > 0) && (grid[x][y - 1][z] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].heat * cellEfficiency(grid, x, y - 1, z) / 3;
+			}
+			if ((y < grid[x].length - 1) && (grid[x][y + 1][z] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].heat * cellEfficiency(grid, x, y + 1, z) / 3;
+			}
+			if ((z > 0) && (grid[x][y][z - 1] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].heat * cellEfficiency(grid, x, y, z - 1) / 3;
+			}
+			if ((z < grid[x][y].length - 1) && (grid[x][y][z + 1] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].heat * cellEfficiency(grid, x, y, z + 1) / 3;
+			}
+			return sum;
+		},
+		'power': function (fuel, grid, x, y, z) {
+			let sum = 0;
+			if ((x > 0) && (grid[x - 1][y][z] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].power * cellEfficiency(grid, x - 1, y, z) / 6;
+			}
+			if ((x < grid.length - 1) && (grid[x + 1][y][z] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].power * cellEfficiency(grid, x + 1, y, z) / 6;
+			}
+			if ((y > 0) && (grid[x][y - 1][z] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].power * cellEfficiency(grid, x, y - 1, z) / 6;
+			}
+			if ((y < grid[x].length - 1) && (grid[x][y + 1][z] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].power * cellEfficiency(grid, x, y + 1, z) / 6;
+			}
+			if ((z > 0) && (grid[x][y][z - 1] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].power * cellEfficiency(grid, x, y, z - 1) / 6;
+			}
+			if ((z < grid[x][y].length - 1) && (grid[x][y][z + 1] == BLOCKS.CELL)) {
+				sum += FUELS[fuel].power * cellEfficiency(grid, x, y, z + 1) / 6;
+			}
+			return sum;
+		},
+	},
+	[BLOCKS.WATER]: {
+		'display': 'Water',
+		'cool': 20,
+		'active': function (grid, x, y, z) {
+			function isCellOrActiveModerator (grid, x, y, z) {
+				return
+					isCell(grid, x, y, z) || isActiveModerator(grid, x, y, z);
+			}
+			return
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isCellOrActiveModerator);
+		},
+	},
+	[BLOCKS.REDSTONE]: {
+		'display': 'Redstone',
+		'cool': 80,
+		'active': function (grid, x, y, z) {
+			return isAdjacentToAtLeastN(grid, x, y, z, 1, isCell);
+		},
+	},
+	[BLOCKS.QUARTZ]: {
+		'display': 'Quartz',
+		'cool': 80,
+		'active': function (grid, x, y, z) {
+			return isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveModerator);
+		},
+	},
+	[BLOCKS.GOLD]: {
+		'display': 'Gold',
+		'cool': 120,
+		'active': function (grid, x, y, z) {
+			return
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveWaterCooler) &&
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveRedstoneCooler);
+		},
+	},
+	[BLOCKS.GLOWSTONE]: {
+		'display': 'Glowstone',
+		'cool': 120,
+		'active': function (grid, x, y, z) {
+			return isAdjacentToAtLeastN(grid, x, y, z, 2, isActiveModerator);
+		},
+	},
+	[BLOCKS.LAPIS]: {
+		'display': 'Lapis',
+		'cool': 100,
+		'active': function (grid, x, y, z) {
+			return
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isCell) &&
+				isAdjacentToAtLeastOneReactorCasing(grid, x, y, z);
+		},
+	},
+	[BLOCKS.DIAMOND]: {
+		'display': 'Diamond',
+		'cool': 120,
+		'active': function (grid, x, y, z) {
+			return
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveWaterCooler) &&
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveQuartzCooler);
+		},
+	},
+	[BLOCKS.HELIUM]: {
+		'display': 'Liquid Helium',
+		'cool': 120,
+		'active': function (grid, x, y, z) {
+			return
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveRedstoneCooler) &&
+				isAdjacentToAtLeastOneReactorCasing(grid, x, y, z);
+		},
+	},
+	[BLOCKS.ENDERIUM]: {
+		'display': 'Enderium',
+		'cool': 140,
+		'active': function (grid, x, y, z) {
+			return
+				((x == 0) || (x == grid.length - 1)) &&
+				((y == 0) || (y == grid[x].length - 1)) &&
+				((z == 0) || (z == grid[x][y].length - 1));
+		},
+	},
+	[BLOCKS.CRYOTHEUM]: {
+		'display': 'Cryotheum',
+		'cool': 140,
+		'active': function (grid, x, y, z) {
+			return isAdjacentToAtLeastN(grid, x, y, z, 2, isCell);
+		},
+	},
+	[BLOCKS.IRON]: {
+		'display': 'Iron',
+		'cool': 60,
+		'active': function (grid, x, y, z) {
+			return isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveGoldCooler);
+		},
+	},
+	[BLOCKS.EMERALD]: {
+		'display': 'Emerald',
+		'cool': 140,
+		'active': function (grid, x, y, z) {
+			return
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveModerator) &&
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isCell);
+		},
+	},
+	[BLOCKS.COPPER]: {
+		'display': 'Copper',
+		'cool': 60,
+		'active': function (grid, x, y, z) {
+			return
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveGlowstoneCooler);
+		},
+	},
+	[BLOCKS.TIN]: {
+		'display': 'Tin',
+		'cool': 80,
+		'active': function (grid, x, y, z) {
+			return (
+				(x > 0) &&
+				isActiveLapisCooler(grid, x - 1, y, z) &&
+				(x < grid.length - 1) &&
+				isActiveLapisCooler(grid, x + 1, y, z)
+			) || (
+				(y > 0) &&
+				isActiveLapisCooler(grid, x, y - 1, z) &&
+				(y < grid[x].length - 1) &&
+				isActiveLapisCooler(grid, x, y + 1, z)
+			) || (
+				(z > 0) &&
+				isActiveLapisCooler(grid, x, y, z - 1) &&
+				(z < grid[x][y].length - 1) &&
+				isActiveLapisCooler(grid, x, y, z + 1)
+			);
+		},
+	},
+	[BLOCKS.MAGNESIUM]: {
+		'display': 'Magnesium',
+		'cool': 100,
+		'active': function (grid, x, y, z) {
+			return
+				isAdjacentToAtLeastOneReactorCasing(grid, x, y, z) &&
+				isAdjacentToAtLeastN(grid, x, y, z, 1, isActiveModerator);
+		},
+	},
+};
+let baseFuelRadio = document.getElementById('fuel-radios').firstElementChild;
+for (let i = 0; i < FUELS.length; ++i) {
+	let fuelRadio = baseFuelRadio.cloneNode(/*deep copy=*/true);
+	fuelRadio.firstElementChild.id = 'fuel' + i;
+	fuelRadio.firstElementChild.value = i;
+	fuelRadio.lastElementChild.setAttribute('for', 'fuel' + i);
+	fuelRadio.lastElementChild.innerHTML = FUELS[i].display;
+	fuelRadio.classList.toggle('invisible');
+	baseFuelRadio.parentNode.insertBefore(fuelRadio, baseFuelRadio);
+}
+document.getElementById('reactor-form').addEventListener(
+	'submit',
+	function (event) {
+		event.preventDefault();
+		function calculatePower (fuel, grid) {
+			let sum = 0;
+			for (let x = 0; x < grid.length; ++x) {
+				for (let y = 0; y < grid[x].length; ++y) {
+					for (let z = 0; z < grid[x][y].length; ++z) {
+						let block = grid[x][y][z];
+						if (BLOCK_PROPERTIES[block].hasOwnProperty('power')) {
+							sum += BLOCK_PROPERTIES[block].power(fuel, grid, x, y, z);
+						}
+					}
+				}
+			}
+			return sum;
+		}
+		function calculateHeat (fuel, grid) {
+			let sum = 0;
+			for (let x = 0; x < grid.length; ++x) {
+				for (let y = 0; y < grid[x].length; ++y) {
+					for (let z = 0; z < grid[x][y].length; ++z) {
+						let block = grid[x][y][z];
+						if (BLOCK_PROPERTIES[block].hasOwnProperty('heat')) {
+							sum += BLOCK_PROPERTIES[block].heat(fuel, grid, x, y, z);
+						}
+						sum -= BLOCK_PROPERTIES[block].cool;
+					}
+				}
+			}
+			return sum;
+		}
+		let bestPower = 0;
+		let bestHeat = 0;
+		let bestGrid = '';
+		function gridStep (fuel, grid, x, y, z) {
+			if (z >= grid[x][y].length) {
+				y += 1;
+				z = 0;
+			}
+			if (y >= grid[x].length) {
+				x += 1;
+				y = 0;
+			}
+			if (x >= grid.length) {
+				let thisPower = calculatePower(fuel, grid);
+				let thisHeat = calculateHeat(fuel, grid);
+				if ((thisHeat <= 0) && (thisPower > bestPower)) {
+					bestPower = thisPower;
+					bestHeat = thisHeat;
+					bestGrid = gridToString(grid);
+					console.log('New best power', bestPower, 'and heat', bestHeat, 'with grid', bestGrid);
+				}
+				return;
+			}
+			for (let block in BLOCKS) {
+				if (!BLOCKS.hasOwnProperty(block)) {
+					continue;
+				}
+				grid[x][y][z] = BLOCKS[block];
+				gridStep(fuel, grid, x, y, z + 1);
+			}
+		}
+		// function gridStep (fuel, grid, x, y, z) {
+		// 	for (let block in BLOCKS) {
+		// 		if (!BLOCKS.hasOwnProperty(block)) {
+		// 			continue;
+		// 		}
+		// 		console.log('Testing', x, y, z, 'with', BLOCKS[block].display);
+		// 		grid[x][y][z] = block;
+		// 		for (let ix = x; ix < grid.length; ++ix) {
+		// 			for (let iy = y; iy < grid[x].length; ++iy) {
+		// 				for (let iz = z + 1; iz < grid[x][y].length; ++iz) {
+		// 					gridStep(fuel, grid, ix, iy, iz);
+		// 				}
+		// 			}
+		// 		}
+		// 		let thisPower = calculatePower(fuel, grid);
+		// 		let thisHeat = calculateHeat(fuel, grid);
+		// 		if ((thisHeat <= 0) && (thisPower > bestPower)) {
+		// 			bestPower = thisPower;
+		// 			bestHeat = thisHeat;
+		// 			console.log('New best power', bestPower, 'and heat', bestHeat, grid);
+		// 		}
+		// 	}
+		// }
+		let checked = document.querySelector(
+			'#fuel-radios input[name = "fuels"]:checked'
+		);
+		let fuel = parseInt(checked.value);
+		let size = parseInt(document.getElementById('size').value);
+		let grid = [];
+		for (let x = 0; x < size; ++x) {
+			grid[x] = [];
+			for (let y = 0; y < size; ++y) {
+				grid[x][y] = [];
+				for (let z = 0; z < size; ++z) {
+					grid[x][y][z] = BLOCKS.EMPTY;
+				}
+			}
+		}
+		function gridToString (grid) {
+			let ret = '[';
+			for (let x = 0; x < grid.length; ++x) {
+				ret += '[';
+				for (let y = 0; y < grid[x].length; ++y) {
+					ret += '[';
+					for (let z = 0; z < grid[x][y].length; ++z) {
+						if (typeof grid[x][y][z] == 'string') {
+							ret += '"' + grid[x][y][z] + '",';
+						} else {
+							ret += grid[x][y][z] + ',';
+						}
+					}
+					ret += '],';
+				}
+				ret += ']';
+			}
+			return ret + ']';		
+		}
+		gridStep(fuel, grid, 0, 0, 0);
+		console.log('Best power', bestPower, 'and heat', bestHeat, 'with grid', gridToString(bestGrid));
+		// let grid = [
+		// 	[
+		// 		[1, 2, 1],
+		// 		[8, 16, 8],
+		// 		[1, 8, 1],
+		// 	],
+		// 	[
+		// 		[2, 7, 2],
+		// 		[7, 15, 7],
+		// 		[2, 7, 2],
+		// 	],
+		// 	[
+		// 		[1, 8, 1],
+		// 		[2, 7, 2],
+		// 		[1, 8, 1],
+		// 	],
+		// ];
+		// console.log('Power', calculatePower(fuel, grid));
+		// console.log('Heat', calculateHeat(fuel, grid));
+	}
+);
+</script>
+<script
+	src="https://code.jquery.com/jquery-3.4.1.slim.min.js"
+	integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n"
+	crossorigin="anonymous"
+>
+</script>
+<script
+	src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js"
+	integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo"
+	crossorigin="anonymous"
+>
+</script>
+<script
+	src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
+	integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
+	crossorigin="anonymous"
+>
+</script>
+</body>
+</html>
